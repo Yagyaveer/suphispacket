@@ -1,0 +1,28 @@
+{
+  "name": "@suphi/packet",
+  "version": "1.4.0",
+  "description": "Networking Library by Suphi",
+  "keywords": [
+    "Roblox",
+    "Networking",
+    "Lua",
+    "symbol"
+  ],
+  "license": "Unlicense",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "main.lua",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Yagyaveer/suphispacket.git"
+  },
+  "author": "suphi",
+  "bugs": {
+    "url": "https://github.com/Yagyaveer/suphispacket/issues"
+  },
+  "homepage": "https://github.com/Yagyaveer/suphispacket#readme"
+}
