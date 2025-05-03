@@ -29,7 +29,6 @@ export type Packet<A... = (), B... = ()> = {
 local ParametersToFunctions, TableToFunctions, ReadParameters, WriteParameters, Timeout
 local RunService = game:GetService("RunService")
 local PlayersService = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local reads, writes, Import, Export, Truncate, Ended =
 	Types.Reads, Types.Writes, Types.Import, Types.Export, Types.Truncate, Types.Ended
 local ReadU8, WriteU8, ReadU16, WriteU16 = reads.NumberU8, writes.NumberU8, reads.NumberU16, writes.NumberU16
@@ -223,7 +222,8 @@ if RunService:IsServer() then
 	playerCursors = {}
 	playerThreads = {}
 	packetCounter = 0
-	remoteEvent = Instance.new("RemoteEvent", ReplicatedStorage)
+	remoteEvent = Instance.new("RemoteEvent")
+	remoteEvent.Parent = script
 	local playerBytes = {}
 	local thread = task.spawn(function()
 		while true do
@@ -264,16 +264,13 @@ if RunService:IsServer() then
 		if player.Parent == nil then
 			return
 		end
-		Import(
-			playerCursors[player]
-				or {
-					Buffer = buffer.create(128),
-					BufferLength = 128,
-					BufferOffset = 0,
-					Instances = {},
-					InstancesOffset = 0,
-				}
-		)
+		Import(playerCursors[player] or {
+			Buffer = buffer.create(128),
+			BufferLength = 128,
+			BufferOffset = 0,
+			Instances = {},
+			InstancesOffset = 0,
+		})
 		WriteU8(packet.Id)
 		WriteU8(threadIndex + 128)
 		WriteParameters(packet.ResponseWrites, values)
@@ -341,7 +338,7 @@ if RunService:IsServer() then
 	end)
 else
 	threads = { Index = 0 }
-	remoteEvent = ReplicatedStorage:WaitForChild("RemoteEvent")
+	remoteEvent = script:WaitForChild("RemoteEvent")
 	local totalTime = 0
 	local thread = task.spawn(function()
 		while true do
