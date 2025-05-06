@@ -218,210 +218,213 @@ function Timeout(thread: thread, value: any)
 	task.defer(thread, value)
 end
 -- Initialize
-if RunService:IsServer() then
-	playerCursors = {}
-	playerThreads = {}
-	packetCounter = 0
-	remoteEvent = Instance.new("RemoteEvent")
-	remoteEvent.Parent = script
-	local playerBytes = {}
-	local thread = task.spawn(function()
-		while true do
-			coroutine.yield()
-			if cursor.BufferOffset > 0 then
-				local truncatedBuffer = buffer.create(cursor.BufferOffset)
-				buffer.copy(truncatedBuffer, 0, cursor.Buffer, 0, cursor.BufferOffset)
-				if cursor.InstancesOffset == 0 then
-					remoteEvent:FireAllClients(truncatedBuffer)
-				else
-					remoteEvent:FireAllClients(truncatedBuffer, cursor.Instances)
-					cursor.InstancesOffset = 0
-					table.clear(cursor.Instances)
+if RunService:IsRunning() then
+	if RunService:IsServer() then
+		playerCursors = {}
+		playerThreads = {}
+		packetCounter = 0
+		remoteEvent = Instance.new("RemoteEvent")
+		remoteEvent.Parent = script
+		local playerBytes = {}
+		local thread = task.spawn(function()
+			while true do
+				coroutine.yield()
+				if cursor.BufferOffset > 0 then
+					local truncatedBuffer = buffer.create(cursor.BufferOffset)
+					buffer.copy(truncatedBuffer, 0, cursor.Buffer, 0, cursor.BufferOffset)
+					if cursor.InstancesOffset == 0 then
+						remoteEvent:FireAllClients(truncatedBuffer)
+					else
+						remoteEvent:FireAllClients(truncatedBuffer, cursor.Instances)
+						cursor.InstancesOffset = 0
+						table.clear(cursor.Instances)
+					end
+					cursor.BufferOffset = 0
 				end
-				cursor.BufferOffset = 0
-			end
-			for player, cursor in playerCursors do
-				local truncatedBuffer = buffer.create(cursor.BufferOffset)
-				buffer.copy(truncatedBuffer, 0, cursor.Buffer, 0, cursor.BufferOffset)
-				if cursor.InstancesOffset == 0 then
-					remoteEvent:FireClient(player, truncatedBuffer)
-				else
-					remoteEvent:FireClient(player, truncatedBuffer, cursor.Instances)
+				for player, cursor in playerCursors do
+					local truncatedBuffer = buffer.create(cursor.BufferOffset)
+					buffer.copy(truncatedBuffer, 0, cursor.Buffer, 0, cursor.BufferOffset)
+					if cursor.InstancesOffset == 0 then
+						remoteEvent:FireClient(player, truncatedBuffer)
+					else
+						remoteEvent:FireClient(player, truncatedBuffer, cursor.Instances)
+					end
 				end
+				table.clear(playerCursors)
+				table.clear(playerBytes)
 			end
-			table.clear(playerCursors)
-			table.clear(playerBytes)
-		end
-	end)
-	local respond = function(packet: Packet, player: Player, threadIndex: number, ...)
-		if packet.OnServerInvoke == nil then
-			if RunService:IsStudio() then
-				warn("OnServerInvoke not found for packet:", packet.Name, "discarding event:", ...)
+		end)
+		local respond = function(packet: Packet, player: Player, threadIndex: number, ...)
+			if packet.OnServerInvoke == nil then
+				if RunService:IsStudio() then
+					warn("OnServerInvoke not found for packet:", packet.Name, "discarding event:", ...)
+				end
+				return
 			end
-			return
+			local values = { packet.OnServerInvoke(player, ...) }
+			if player.Parent == nil then
+				return
+			end
+			Import(playerCursors[player] or {
+				Buffer = buffer.create(128),
+				BufferLength = 128,
+				BufferOffset = 0,
+				Instances = {},
+				InstancesOffset = 0,
+			})
+			WriteU8(packet.Id)
+			WriteU8(threadIndex + 128)
+			WriteParameters(packet.ResponseWrites, values)
+			playerCursors[player] = Export()
 		end
-		local values = { packet.OnServerInvoke(player, ...) }
-		if player.Parent == nil then
-			return
-		end
-		Import(playerCursors[player] or {
-			Buffer = buffer.create(128),
-			BufferLength = 128,
-			BufferOffset = 0,
-			Instances = {},
-			InstancesOffset = 0,
-		})
-		WriteU8(packet.Id)
-		WriteU8(threadIndex + 128)
-		WriteParameters(packet.ResponseWrites, values)
-		playerCursors[player] = Export()
-	end
 
-	local onServerEvent = function(player: Player, receivedBuffer: buffer, instances: { Instance }?)
-		local bytes = (playerBytes[player] or 0) + math.max(buffer.len(receivedBuffer), 800)
-		if bytes > 8_000 then
-			if RunService:IsStudio() then
-				warn(player.Name, "is exceeding the data/rate limit; some events may be dropped")
+		local onServerEvent = function(player: Player, receivedBuffer: buffer, instances: { Instance }?)
+			local bytes = (playerBytes[player] or 0) + math.max(buffer.len(receivedBuffer), 800)
+			if bytes > 8_000 then
+				if RunService:IsStudio() then
+					warn(player.Name, "is exceeding the data/rate limit; some events may be dropped")
+				end
+				return
 			end
-			return
-		end
-		playerBytes[player] = bytes
-		Import({
-			Buffer = receivedBuffer,
-			BufferLength = buffer.len(receivedBuffer),
-			BufferOffset = 0,
-			Instances = instances or {},
-			InstancesOffset = 0,
-		})
-		while Ended() == false do
-			local packet = packets[ReadU8()]
-			if packet.ResponseReads then
-				local threadIndex = ReadU8()
-				if threadIndex < 128 then
-					Task:Defer(respond, packet, player, threadIndex, ReadParameters(packet.Reads))
-				else
-					threadIndex -= 128
-					local threads = playerThreads[player][threadIndex]
-					if threads then
-						task.cancel(threads.Timeout)
-						task.defer(threads.Yielded, ReadParameters(packet.ResponseReads))
-						playerThreads[player][threadIndex] = nil
-					elseif RunService:IsStudio() then
-						warn(
-							"Response thread not found for packet:",
-							packet.Name,
-							"discarding response:",
-							ReadParameters(packet.ResponseReads)
-						)
+			playerBytes[player] = bytes
+			Import({
+				Buffer = receivedBuffer,
+				BufferLength = buffer.len(receivedBuffer),
+				BufferOffset = 0,
+				Instances = instances or {},
+				InstancesOffset = 0,
+			})
+			while Ended() == false do
+				local packet = packets[ReadU8()]
+				if packet.ResponseReads then
+					local threadIndex = ReadU8()
+					if threadIndex < 128 then
+						Task:Defer(respond, packet, player, threadIndex, ReadParameters(packet.Reads))
 					else
-						ReadParameters(packet.ResponseReads)
-					end
-				end
-			else
-				packet.OnServerEvent:Fire(player, ReadParameters(packet.Reads))
-			end
-		end
-	end
-	remoteEvent.OnServerEvent:Connect(function(player: Player, ...)
-		local success, errorMessage: string? = pcall(onServerEvent, player, ...)
-		if errorMessage and RunService:IsStudio() then
-			warn(player.Name, errorMessage)
-		end
-	end)
-	PlayersService.PlayerRemoving:Connect(function(player)
-		playerCursors[player] = nil
-		playerThreads[player] = nil
-		playerBytes[player] = nil
-	end)
-	RunService.Heartbeat:Connect(function(deltaTime)
-		task.defer(thread)
-	end)
-else
-	threads = { Index = 0 }
-	remoteEvent = script:WaitForChild("RemoteEvent")
-	local totalTime = 0
-	local thread = task.spawn(function()
-		while true do
-			coroutine.yield()
-			if cursor.BufferOffset > 0 then
-				local truncatedBuffer = buffer.create(cursor.BufferOffset)
-				buffer.copy(truncatedBuffer, 0, cursor.Buffer, 0, cursor.BufferOffset)
-				if cursor.InstancesOffset == 0 then
-					remoteEvent:FireServer(truncatedBuffer)
-				else
-					remoteEvent:FireServer(truncatedBuffer, cursor.Instances)
-					cursor.InstancesOffset = 0
-					table.clear(cursor.Instances)
-				end
-				cursor.BufferOffset = 0
-			end
-		end
-	end)
-	local respond = function(packet: Packet, threadIndex: number, ...)
-		if packet.OnClientInvoke == nil then
-			warn("OnClientInvoke not found for packet:", packet.Name, "discarding event:", ...)
-			return
-		end
-		local values = { packet.OnClientInvoke(...) }
-		Import(cursor)
-		WriteU8(packet.Id)
-		WriteU8(threadIndex + 128)
-		WriteParameters(packet.ResponseWrites, values)
-		cursor = Export()
-	end
-	remoteEvent.OnClientEvent:Connect(function(receivedBuffer: buffer, instances: { Instance }?)
-		Import({
-			Buffer = receivedBuffer,
-			BufferLength = buffer.len(receivedBuffer),
-			BufferOffset = 0,
-			Instances = instances or {},
-			InstancesOffset = 0,
-		})
-		while Ended() == false do
-			local packet = packets[ReadU8()]
-			if packet.ResponseReads then
-				local threadIndex = ReadU8()
-				if threadIndex < 128 then
-					Task:Defer(respond, packet, threadIndex, ReadParameters(packet.Reads))
-				else
-					threadIndex -= 128
-					local threads = threads[threadIndex]
-					if threads then
-						task.cancel(threads.Timeout)
-						task.defer(threads.Yielded, ReadParameters(packet.ResponseReads))
-						threads[threadIndex] = nil
-					else
-						warn(
-							"Response thread not found for packet:",
-							packet.Name,
-							"discarding response:",
+						threadIndex -= 128
+						local threads = playerThreads[player][threadIndex]
+						if threads then
+							task.cancel(threads.Timeout)
+							task.defer(threads.Yielded, ReadParameters(packet.ResponseReads))
+							playerThreads[player][threadIndex] = nil
+						elseif RunService:IsStudio() then
+							warn(
+								"Response thread not found for packet:",
+								packet.Name,
+								"discarding response:",
+								ReadParameters(packet.ResponseReads)
+							)
+						else
 							ReadParameters(packet.ResponseReads)
-						)
+						end
 					end
+				else
+					packet.OnServerEvent:Fire(player, ReadParameters(packet.Reads))
 				end
-			else
-				packet.OnClientEvent:Fire(ReadParameters(packet.Reads))
 			end
 		end
-	end)
-	remoteEvent.AttributeChanged:Connect(function(name)
-		local packet = packets[name]
-		if packet then
-			if packet.Id then
-				packets[packet.Id] = nil
+		remoteEvent.OnServerEvent:Connect(function(player: Player, ...)
+			local success, errorMessage: string? = pcall(onServerEvent, player, ...)
+			if errorMessage and RunService:IsStudio() then
+				warn(player.Name, errorMessage)
 			end
-			packet.Id = remoteEvent:GetAttribute(name)
-			if packet.Id then
-				packets[packet.Id] = packet
-			end
-		end
-	end)
-	RunService.Heartbeat:Connect(function(deltaTime)
-		totalTime += deltaTime
-		if totalTime > 0.016666666666666666 then
-			totalTime %= 0.016666666666666666
+		end)
+		PlayersService.PlayerRemoving:Connect(function(player)
+			playerCursors[player] = nil
+			playerThreads[player] = nil
+			playerBytes[player] = nil
+		end)
+		RunService.Heartbeat:Connect(function(deltaTime)
 			task.defer(thread)
+		end)
+	else
+		threads = { Index = 0 }
+		remoteEvent = script:WaitForChild("RemoteEvent")
+		local totalTime = 0
+		local thread = task.spawn(function()
+			while true do
+				coroutine.yield()
+				if cursor.BufferOffset > 0 then
+					local truncatedBuffer = buffer.create(cursor.BufferOffset)
+					buffer.copy(truncatedBuffer, 0, cursor.Buffer, 0, cursor.BufferOffset)
+					if cursor.InstancesOffset == 0 then
+						remoteEvent:FireServer(truncatedBuffer)
+					else
+						remoteEvent:FireServer(truncatedBuffer, cursor.Instances)
+						cursor.InstancesOffset = 0
+						table.clear(cursor.Instances)
+					end
+					cursor.BufferOffset = 0
+				end
+			end
+		end)
+		local respond = function(packet: Packet, threadIndex: number, ...)
+			if packet.OnClientInvoke == nil then
+				warn("OnClientInvoke not found for packet:", packet.Name, "discarding event:", ...)
+				return
+			end
+			local values = { packet.OnClientInvoke(...) }
+			Import(cursor)
+			WriteU8(packet.Id)
+			WriteU8(threadIndex + 128)
+			WriteParameters(packet.ResponseWrites, values)
+			cursor = Export()
 		end
-	end)
+		remoteEvent.OnClientEvent:Connect(function(receivedBuffer: buffer, instances: { Instance }?)
+			Import({
+				Buffer = receivedBuffer,
+				BufferLength = buffer.len(receivedBuffer),
+				BufferOffset = 0,
+				Instances = instances or {},
+				InstancesOffset = 0,
+			})
+			while Ended() == false do
+				local packet = packets[ReadU8()]
+				if packet.ResponseReads then
+					local threadIndex = ReadU8()
+					if threadIndex < 128 then
+						Task:Defer(respond, packet, threadIndex, ReadParameters(packet.Reads))
+					else
+						threadIndex -= 128
+						local threads = threads[threadIndex]
+						if threads then
+							task.cancel(threads.Timeout)
+							task.defer(threads.Yielded, ReadParameters(packet.ResponseReads))
+							threads[threadIndex] = nil
+						else
+							warn(
+								"Response thread not found for packet:",
+								packet.Name,
+								"discarding response:",
+								ReadParameters(packet.ResponseReads)
+							)
+						end
+					end
+				else
+					packet.OnClientEvent:Fire(ReadParameters(packet.Reads))
+				end
+			end
+		end)
+		remoteEvent.AttributeChanged:Connect(function(name)
+			local packet = packets[name]
+			if packet then
+				if packet.Id then
+					packets[packet.Id] = nil
+				end
+				packet.Id = remoteEvent:GetAttribute(name)
+				if packet.Id then
+					packets[packet.Id] = packet
+				end
+			end
+		end)
+		RunService.Heartbeat:Connect(function(deltaTime)
+			totalTime += deltaTime
+			if totalTime > 0.016666666666666666 then
+				totalTime %= 0.016666666666666666
+				task.defer(thread)
+			end
+		end)
+	end
 end
+
 return setmetatable(Types.Types, { __call = Constructor })
