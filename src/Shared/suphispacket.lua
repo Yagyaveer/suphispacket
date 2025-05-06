@@ -217,6 +217,7 @@ end
 function Timeout(thread: thread, value: any)
 	task.defer(thread, value)
 end
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Initialize
 if RunService:IsRunning() then
 	if RunService:IsServer() then
@@ -224,7 +225,7 @@ if RunService:IsRunning() then
 		playerThreads = {}
 		packetCounter = 0
 		remoteEvent = Instance.new("RemoteEvent")
-		remoteEvent.Parent = script
+		remoteEvent.Parent = ReplicatedStorage
 		local playerBytes = {}
 		local thread = task.spawn(function()
 			while true do
@@ -339,7 +340,7 @@ if RunService:IsRunning() then
 		end)
 	else
 		threads = { Index = 0 }
-		remoteEvent = script:WaitForChild("RemoteEvent")
+		remoteEvent = ReplicatedStorage:WaitForChild("RemoteEvent", 100)
 		local totalTime = 0
 		local thread = task.spawn(function()
 			while true do
